@@ -6,10 +6,6 @@
 #
 # This watchdog script tries to re-resolve hostnames for inactive WireGuard peers.
 # Use it for peers with a frequently changing dynamic IP.
-# persistent_keepalive must be set, recommended value is 25 seconds.
-#
-# Run this script from cron every minute:
-# echo '* * * * * /usr/bin/wireguard_watchdog' >> /etc/crontabs/root
 
 
 . /lib/functions.sh
@@ -20,18 +16,15 @@ check_peer_activity() {
   local public_key
   local endpoint_host
   local endpoint_port
-  local persistent_keepalive
   local last_handshake
   local idle_seconds
 
   config_get public_key "${cfg}" "public_key"
   config_get endpoint_host "${cfg}" "endpoint_host"
   config_get endpoint_port "${cfg}" "endpoint_port"
-  persistent_keepalive=$(wg show ${iface} persistent-keepalive | grep ${public_key} | awk '{print $2}')
 
-  # only process peers with endpoints and keepalive set
+  # only process peers with endpoints set
   [ -z ${endpoint_host} ] && return 0;
-  [ -z ${persistent_keepalive} -o ${persistent_keepalive} = "off" ] && return 0;
 
   # skip IP addresses
   # check taken from packages/net/ddns-scripts/files/dynamic_dns_functions.sh
@@ -41,12 +34,13 @@ check_peer_activity() {
   local IPV6=$(echo ${endpoint_host} | grep -m 1 -o "$IPV6_REGEX")
   [ -n "${IPV4}" -o -n "${IPV6}" ] && return 0;
 
-  # re-resolve endpoint hostname if not responding for too long
+  # re-resolve endpoint hostname only if latest handshake is old
   last_handshake=$(wg show ${iface} latest-handshakes | grep ${public_key} | awk '{print $2}')
   [ -z ${last_handshake} ] && return 0;
   idle_seconds=$(($(date +%s)-${last_handshake}))
-  [ ${idle_seconds} -lt 150 ] && return 0;
-  logger -t "wireguard_monitor" "${iface} endpoint ${endpoint_host}:${endpoint_port} is not responding for ${idle_seconds} seconds, trying to re-resolve hostname"
+  [ ${idle_seconds} -lt 135 ] && return 0;
+
+  logger -t "wireguard_monitor" "${iface}: Latest handshake with endpoint ${endpoint_host}:${endpoint_port} is ${idle_seconds} seconds old, trying to re-resolve hostname"
   wg set ${iface} peer ${public_key} endpoint "${endpoint_host}:${endpoint_port}"
 }
 
